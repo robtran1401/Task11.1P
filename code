@@ -1,150 +1,72 @@
+#include <Wire.h>
+#include <BH1750.h>
 #include <SPI.h>
 #include <WiFiNINA.h>
-#include "ThingSpeak.h"
-#include "DHT.h"
 
-// WIFI
-char ssid[] = "WIFI_NAME";
-char pass[] = "WIFI_PASSWORD";
+BH1750 lightMeter;
+WiFiSSLClient client;
 
-// THINGSPEAK
-unsigned long channelID = 3307064;
-const char *writeAPIKey = "KN7RPR6K0KBV19B0";
-WiFiClient client;
+// WIFI 
+char ssid[] = "Optus_8D9EDB";
+char pass[] = "subahwackeUFaXf";
 
-// Sensor pins
-#define DHTPIN 2
-#define DHTTYPE DHT11
-#define LIGHT_PIN A0
+// IFTTT 
+const char host[] = "maker.ifttt.com";
+const int httpsPort = 443;
+const char key[] = "d7CT2TZ2Y27FjFNJVtDlmL";
 
-DHT dht(DHTPIN, DHTTYPE);
-
-// Timing
-const unsigned long uploadInterval = 30000;
-unsigned long lastUploadTime = 0;
-
-// Sunlight logic
-const int sunlightThreshold = 600;   // adjust after testing
-bool inSunlight = false;
-unsigned long sunlightStartTime = 0;
-unsigned long totalSunlightTime = 0;
-
-void connectToWiFi();
-float readTemperature();
-int readLightLevel();
-void updateSunlightStatus(int lightLevel);
-void printReadings(float temperature, int lightLevel);
-void sendDataToThingSpeak(float temperature, int lightLevel);
+bool sunlight = false;
 
 void setup() {
   Serial.begin(9600);
   delay(1500);
 
-  dht.begin();
-  connectToWiFi();
-  ThingSpeak.begin(client);
+  Wire.begin();
+  lightMeter.begin();
 
-  Serial.println("Smart Terrarium Monitoring System started.");
+  Serial.print("Connecting to WiFi");
+  while (WiFi.begin(ssid, pass) != WL_CONNECTED) {
+    Serial.print(".");
+    delay(3000);
+  }
+  Serial.println("\nWiFi connected");
 }
 
 void loop() {
-  if (WiFi.status() != WL_CONNECTED) {
-    connectToWiFi();
+  float lux = lightMeter.readLightLevel();
+
+  Serial.print("Light: ");
+  Serial.print(lux);
+  Serial.println(" lx");
+
+// change if needed, depend on the environment
+  if (lux > 20 && sunlight == false) {
+    sunlight = true;
+    sendToIFTTT("sunlight_on", lux);
   }
 
-  if (millis() - lastUploadTime >= uploadInterval) {
-    float temperature = readTemperature();
-    int lightLevel = readLightLevel();
-
-    if (!isnan(temperature)) {
-      updateSunlightStatus(lightLevel);
-      printReadings(temperature, lightLevel);
-      sendDataToThingSpeak(temperature, lightLevel);
-    } else {
-      Serial.println("Error: Failed to read from DHT sensor.");
-    }
-
-    lastUploadTime = millis();
+  if (lux < 10 && sunlight == true) {
+    sunlight = false;
+    sendToIFTTT("sunlight_off", lux);
   }
+
+  delay(3000);
 }
 
-void connectToWiFi() {
-  Serial.print("Connecting to WiFi");
+void sendToIFTTT(String eventName, float lux) {
+  String url = "/trigger/" + eventName + "/with/key/" + key + "?value1=" + String(lux);
 
-  while (WiFi.status() != WL_CONNECTED) {
-    WiFi.begin(ssid, pass);
-    delay(5000);
-    Serial.print(".");
-  }
+  if (client.connect(host, 443)) {
+    client.println("GET " + url + " HTTP/1.1");
+    client.println("Host: maker.ifttt.com");
+    client.println("Connection: close");
+    client.println();
 
-  Serial.println();
-  Serial.println("WiFi connected.");
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
-}
-
-float readTemperature() {
-  return dht.readTemperature();
-}
-
-int readLightLevel() {
-  return analogRead(LIGHT_PIN);
-}
-
-void updateSunlightStatus(int lightLevel) {
-  if (lightLevel >= sunlightThreshold && !inSunlight) {
-    inSunlight = true;
-    sunlightStartTime = millis();
-    Serial.println("Sunlight started.");
-  }
-
-  if (lightLevel < sunlightThreshold && inSunlight) {
-    inSunlight = false;
-    totalSunlightTime += millis() - sunlightStartTime;
-    Serial.println("Sunlight stopped.");
-  }
-}
-
-void printReadings(float temperature, int lightLevel) {
-  unsigned long totalMinutes = totalSunlightTime / 60000;
-
-  if (inSunlight) {
-    totalMinutes += (millis() - sunlightStartTime) / 60000;
-  }
-
-  Serial.print("Temperature: ");
-  Serial.print(temperature);
-  Serial.println(" C");
-
-  Serial.print("Light Level: ");
-  Serial.println(lightLevel);
-
-  Serial.print("Sunlight Status: ");
-  Serial.println(inSunlight ? "In sunlight" : "Not in sunlight");
-
-  Serial.print("Total Sunlight Today: ");
-  Serial.print(totalMinutes);
-  Serial.println(" minutes");
-}
-
-void sendDataToThingSpeak(float temperature, int lightLevel) {
-  unsigned long totalMinutes = totalSunlightTime / 60000;
-
-  if (inSunlight) {
-    totalMinutes += (millis() - sunlightStartTime) / 60000;
-  }
-
-  ThingSpeak.setField(1, temperature);
-  ThingSpeak.setField(2, lightLevel);
-  ThingSpeak.setField(3, inSunlight ? 1 : 0);
-  ThingSpeak.setField(4, totalMinutes);
-
-  int responseCode = ThingSpeak.writeFields(channelID, writeAPIKey);
-
-  if (responseCode == 200) {
-    Serial.println("Data sent to ThingSpeak successfully.");
+    Serial.print("Sent to IFTTT: ");
+    Serial.println(eventName);
   } else {
-    Serial.print("ThingSpeak update failed. HTTP error code: ");
-    Serial.println(responseCode);
+    Serial.println("IFTTT connection failed");
   }
+
+  client.stop();
 }
