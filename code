@@ -2,18 +2,25 @@
 #include <BH1750.h>
 #include <SPI.h>
 #include <WiFiNINA.h>
+#include "DHT.h"
 
 BH1750 lightMeter;
 WiFiSSLClient client;
 
 // WIFI 
-char ssid[] = "WIFI";
-char pass[] = "Password";
+char ssid[] = "wifi";
+char pass[] = "password";
 
 // IFTTT 
 const char host[] = "maker.ifttt.com";
 const int httpsPort = 443;
 const char key[] = "d7CT2TZ2Y27FjFNJVtDlmL";
+
+// DHT11 temperature sensor
+#define DHTPIN 2
+#define DHTTYPE DHT11
+
+DHT dht(DHTPIN, DHTTYPE);
 
 bool sunlight = false;
 
@@ -23,38 +30,61 @@ void setup() {
 
   Wire.begin();
   lightMeter.begin();
+  dht.begin();
 
   Serial.print("Connecting to WiFi");
   while (WiFi.begin(ssid, pass) != WL_CONNECTED) {
     Serial.print(".");
     delay(3000);
   }
+
   Serial.println("\nWiFi connected");
+  Serial.println("Smart Terrarium System Started");
 }
 
 void loop() {
   float lux = lightMeter.readLightLevel();
+  float temperature = dht.readTemperature();
+  float humidity = dht.readHumidity();
 
   Serial.print("Light: ");
   Serial.print(lux);
   Serial.println(" lx");
 
-// change if needed, depend on the environment
-  if (lux > 20 && sunlight == false) {
-    sunlight = true;
-    sendToIFTTT("sunlight_on", lux);
+  if (isnan(temperature) || isnan(humidity)) {
+    Serial.println("Failed to read from DHT11 sensor!");
+  } else {
+    Serial.print("Temperature: ");
+    Serial.print(temperature);
+    Serial.println(" C");
+
+    Serial.print("Humidity: ");
+    Serial.print(humidity);
+    Serial.println(" %");
   }
 
+  Serial.println("----------------------");
+
+  // Sunlight started
+  if (lux > 20 && sunlight == false) {
+    sunlight = true;
+    sendToIFTTT("sunlight_on", lux, temperature, humidity);
+  }
+
+  // Sunlight stopped
   if (lux < 10 && sunlight == true) {
     sunlight = false;
-    sendToIFTTT("sunlight_off", lux);
+    sendToIFTTT("sunlight_off", lux, temperature, humidity);
   }
 
   delay(3000);
 }
 
-void sendToIFTTT(String eventName, float lux) {
-  String url = "/trigger/" + eventName + "/with/key/" + key + "?value1=" + String(lux);
+void sendToIFTTT(String eventName, float lux, float temperature, float humidity) {
+  String url = "/trigger/" + eventName + "/with/key/" + key +
+               "?value1=" + String(lux) +
+               "&value2=" + String(temperature) +
+               "&value3=" + String(humidity);
 
   Serial.println("Connecting to IFTTT...");
 
@@ -81,4 +111,3 @@ void sendToIFTTT(String eventName, float lux) {
 
   client.stop();
 }
-
