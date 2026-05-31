@@ -2,25 +2,21 @@
 #include <BH1750.h>
 #include <SPI.h>
 #include <WiFiNINA.h>
-#include "DHT.h"
 
 BH1750 lightMeter;
 WiFiSSLClient client;
 
-// WIFI 
-char ssid[] = "wifi";
-char pass[] = "password";
+// WIFI
+char ssid[] = "CM BILLIARDS GUEST";
+char pass[] = "cmbilliardsguest";
 
-// IFTTT 
+// IFTTT
 const char host[] = "maker.ifttt.com";
 const int httpsPort = 443;
 const char key[] = "d7CT2TZ2Y27FjFNJVtDlmL";
 
-// DHT11 temperature sensor
-#define DHTPIN 2
-#define DHTTYPE DHT11
-
-DHT dht(DHTPIN, DHTTYPE);
+// LED
+const int ledPin = 2;
 
 bool sunlight = false;
 
@@ -30,7 +26,9 @@ void setup() {
 
   Wire.begin();
   lightMeter.begin();
-  dht.begin();
+
+  pinMode(ledPin, OUTPUT);
+  digitalWrite(ledPin, LOW);
 
   Serial.print("Connecting to WiFi");
   while (WiFi.begin(ssid, pass) != WL_CONNECTED) {
@@ -39,74 +37,46 @@ void setup() {
   }
 
   Serial.println("\nWiFi connected");
-  Serial.println("Smart Terrarium System Started");
 }
 
 void loop() {
   float lux = lightMeter.readLightLevel();
-  float temperature = dht.readTemperature();
-  float humidity = dht.readHumidity();
 
   Serial.print("Light: ");
   Serial.print(lux);
   Serial.println(" lx");
 
-  if (isnan(temperature) || isnan(humidity)) {
-    Serial.println("Failed to read from DHT11 sensor!");
-  } else {
-    Serial.print("Temperature: ");
-    Serial.print(temperature);
-    Serial.println(" C");
-
-    Serial.print("Humidity: ");
-    Serial.print(humidity);
-    Serial.println(" %");
-  }
-
-  Serial.println("----------------------");
-
-  // Sunlight started
+  // Sunlight detected
   if (lux > 20 && sunlight == false) {
     sunlight = true;
-    sendToIFTTT("sunlight_on", lux, temperature, humidity);
+    digitalWrite(ledPin, LOW);
+    sendToIFTTT("sunlight_on", lux);
   }
 
-  // Sunlight stopped
+  // No sunlight
   if (lux < 10 && sunlight == true) {
     sunlight = false;
-    sendToIFTTT("sunlight_off", lux, temperature, humidity);
+    digitalWrite(ledPin, HIGH);
+    sendToIFTTT("sunlight_off", lux);
   }
 
   delay(3000);
 }
 
-void sendToIFTTT(String eventName, float lux, float temperature, float humidity) {
+void sendToIFTTT(String eventName, float lux) {
   String url = "/trigger/" + eventName + "/with/key/" + key +
-               "?value1=" + String(lux) +
-               "&value2=" + String(temperature) +
-               "&value3=" + String(humidity);
+               "?value1=" + String(lux);
 
-  Serial.println("Connecting to IFTTT...");
-
-  if (client.connect(host, httpsPort)) {
+  if (client.connect(host, 443)) {
     client.println("GET " + url + " HTTP/1.1");
     client.println("Host: maker.ifttt.com");
-    client.println("User-Agent: Arduino");
     client.println("Connection: close");
     client.println();
 
-    Serial.print("Request sent to IFTTT event: ");
+    Serial.print("Sent to IFTTT: ");
     Serial.println(eventName);
-
-    unsigned long timeout = millis();
-    while (client.connected() && millis() - timeout < 5000) {
-      while (client.available()) {
-        String line = client.readStringUntil('\n');
-        Serial.println(line);
-      }
-    }
   } else {
-    Serial.println("IFTTT connection failed.");
+    Serial.println("IFTTT connection failed");
   }
 
   client.stop();
